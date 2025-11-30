@@ -3,13 +3,14 @@ import os
 import subprocess
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QTextEdit, QFileDialog, QDialog
+    QPushButton, QTextEdit, QFileDialog, QDialog, QProgressBar
 )
 from PyQt5.QtCore import QThread, pyqtSignal
 
 
 class CompileThread(QThread):
     log_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal()
 
     def __init__(self, files):
         super().__init__()
@@ -23,17 +24,21 @@ class CompileThread(QThread):
 
             self.log_signal.emit(f"🔨 Compiling {f} ...\n")
             try:
-                # Run PyInstaller
+                creationflags = 0
+                if os.name == 'nt':
+                    creationflags = subprocess.CREATE_NO_WINDOW
+
                 process = subprocess.Popen(
                     ["pyinstaller", "--onefile", f],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    universal_newlines=True
+                    universal_newlines=True,
+                    bufsize=1,
+                    creationflags=creationflags
                 )
 
-                # Stream output line by line
                 for line in iter(process.stdout.readline, ''):
-                    self.log_signal.emit(line)
+                    self.log_signal.emit(line.rstrip())
                 process.stdout.close()
                 process.wait()
 
@@ -45,16 +50,29 @@ class CompileThread(QThread):
             except Exception as e:
                 self.log_signal.emit(f"❌ Exception occurred: {str(e)}\n")
 
+        # Signal that compilation is finished
+        self.finished_signal.emit()
+
 
 class ConsolePopup(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Compilation Console")
         self.setGeometry(300, 300, 700, 400)
+
         layout = QVBoxLayout()
+
+        # Indeterminate progress bar (busy animation)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(0)  # 0,0 makes it "busy" style
+        layout.addWidget(self.progress_bar)
+
+        # Text output area
         self.text_output = QTextEdit()
         self.text_output.setReadOnly(True)
         layout.addWidget(self.text_output)
+
         self.setLayout(layout)
 
     def append_text(self, text):
@@ -62,6 +80,11 @@ class ConsolePopup(QDialog):
         self.text_output.verticalScrollBar().setValue(
             self.text_output.verticalScrollBar().maximum()
         )
+
+    def finish_progress(self):
+        # Switch progress bar to complete
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(100)
 
 
 class PyCompilerGUI(QWidget):
@@ -120,7 +143,8 @@ class PyCompilerGUI(QWidget):
                 self.log_output.append(f"✅ File exists: {f}")
                 with open(f, "r", encoding="utf-8") as file:
                     content = file.read()
-                    imports = [line for line in content.splitlines() if line.startswith("import") or line.startswith("from")]
+                    imports = [line for line in content.splitlines()
+                               if line.startswith("import") or line.startswith("from")]
                     if imports:
                         self.log_output.append(f"   Imports found: {', '.join(imports)}")
 
@@ -134,13 +158,14 @@ class PyCompilerGUI(QWidget):
             self.log_output.append("❌ No files specified for compilation.")
             return
 
-        # Show console popup
+        # Show console popup with busy progress bar
         self.console = ConsolePopup()
         self.console.show()
 
         # Start compilation thread
         self.thread = CompileThread(files)
         self.thread.log_signal.connect(self.console.append_text)
+        self.thread.finished_signal.connect(self.console.finish_progress)
         self.thread.start()
 
 
