@@ -1,29 +1,70 @@
 # ============================================================================
-#                       ViewFinder Compiler Tool
+#                       ViewFinder Compiler Tool (Enhanced)
 # ============================================================================
 """
-Simple compiler for ViewFinder project.
+Enhanced compiler for ViewFinder project with auto-detection.
 Creates standalone executables with all dependencies bundled.
+Searches for files in subdirectories automatically.
 """
 
 import sys
 import os
 import subprocess
+from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QTextEdit, QProgressBar, QMessageBox, QGroupBox
+    QPushButton, QTextEdit, QProgressBar, QMessageBox, QGroupBox, QFileDialog
 )
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QFont
+
+
+def find_file(filename, search_depth=3, custom_path=None):
+    """
+    Search for a file in current directory and subdirectories.
+    If custom_path is provided, search there instead.
+    Returns the full path if found, None otherwise.
+    """
+    # If custom path is provided, search only there
+    if custom_path:
+        search_root = Path(custom_path)
+        # Check root directory
+        target = search_root / filename
+        if target.is_file():
+            return str(target.absolute())
+        
+        # Search subdirectories
+        for depth in range(1, search_depth + 1):
+            pattern = "/".join(["*"] * depth) + f"/{filename}"
+            matches = list(search_root.glob(pattern))
+            if matches:
+                return str(matches[0].absolute())
+        return None
+    
+    # Original behavior - search from current directory
+    # First check current directory
+    if os.path.isfile(filename):
+        return os.path.abspath(filename)
+    
+    # Search in subdirectories
+    current_dir = Path.cwd()
+    for depth in range(1, search_depth + 1):
+        pattern = "/".join(["*"] * depth) + f"/{filename}"
+        matches = list(current_dir.glob(pattern))
+        if matches:
+            return str(matches[0].absolute())
+    
+    return None
 
 
 class CompileThread(QThread):
     log_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool, str)
 
-    def __init__(self, targets):
+    def __init__(self, targets, custom_path=None):
         super().__init__()
         self.targets = targets  # List of (file, name, description) tuples
+        self.custom_path = custom_path
 
     def compile_single(self, target_file, output_name, description):
         """Compile a single file"""
@@ -31,13 +72,18 @@ class CompileThread(QThread):
         self.log_signal.emit(f"Compiling: {description}")
         self.log_signal.emit("=" * 60)
 
-        # Check if target file exists
-        if not os.path.isfile(target_file):
+        # Find the file (may be in subdirectory or custom path)
+        found_path = find_file(target_file, custom_path=self.custom_path)
+        if not found_path:
             self.log_signal.emit(f"✗ ERROR: File not found: {target_file}")
+            if self.custom_path:
+                self.log_signal.emit(f"  Searched in: {self.custom_path}")
+            else:
+                self.log_signal.emit(f"  Searched in current directory and subdirectories (depth 3)")
             return False
-
-        self.log_signal.emit(f"📦 Source: {target_file}")
-        self.log_signal.emit(f"📝 Output: {output_name}.exe\n")
+        
+        self.log_signal.emit(f"✓ Found: {found_path}")
+        self.log_signal.emit(f"📦 Output: {output_name}.exe\n")
 
         # Build PyInstaller command
         cmd = [
@@ -46,7 +92,7 @@ class CompileThread(QThread):
             "--noconsole",
             "--clean",
             f"--name={output_name}",
-            target_file
+            found_path
         ]
 
         self.log_signal.emit("Command: " + " ".join(cmd))
@@ -153,25 +199,64 @@ class CompilerGUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ViewFinder Compiler")
-        self.setGeometry(200, 200, 900, 650)
+        self.setGeometry(200, 200, 900, 700)
         self.compile_thread = None
+        self.custom_search_path = None  # Store custom folder path
         self.init_ui()
         self.apply_dark_theme()
+        self.check_files_on_startup()
 
     def init_ui(self):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
         header = QLabel("ViewFinder Compiler")
-        header.setFont(QFont("Arial", 16, QFont.Bold))
-        header.setAlignment(Qt.AlignCenter)
+        header.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
 
         subtitle = QLabel("Create standalone executables with all dependencies bundled")
-        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
         layout.addSpacing(20)
+
+        # Folder selection section
+        folder_group = QGroupBox("Source Folder Selection")
+        folder_layout = QVBoxLayout()
+        
+        folder_info = QLabel(
+            "By default, files are searched in the current directory and subdirectories.\n"
+            "You can specify a custom folder to search instead:"
+        )
+        folder_info.setWordWrap(True)
+        folder_layout.addWidget(folder_info)
+        
+        folder_btn_layout = QHBoxLayout()
+        
+        self.browse_folder_btn = QPushButton("📁 Browse for Project Folder")
+        self.browse_folder_btn.clicked.connect(self.browse_folder)
+        folder_btn_layout.addWidget(self.browse_folder_btn)
+        
+        self.clear_folder_btn = QPushButton("Clear Custom Folder")
+        self.clear_folder_btn.clicked.connect(self.clear_custom_folder)
+        self.clear_folder_btn.setEnabled(False)
+        folder_btn_layout.addWidget(self.clear_folder_btn)
+        
+        folder_layout.addLayout(folder_btn_layout)
+        
+        self.current_folder_label = QLabel("Current search location: <b>Current directory</b>")
+        self.current_folder_label.setWordWrap(True)
+        folder_layout.addWidget(self.current_folder_label)
+        
+        folder_group.setLayout(folder_layout)
+        layout.addWidget(folder_group)
+
+        # File detection status
+        self.status_label = QLabel("Detecting project files...")
+        self.status_label.setStyleSheet("color: #14ffec; padding: 5px;")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
 
         options_group = QGroupBox("Compilation Options")
         options_layout = QVBoxLayout()
@@ -182,7 +267,8 @@ class CompilerGUI(QWidget):
             "  - ViewFinder.exe (launcher)\n"
             "  - ViewFinder_Config.exe (config menu)\n"
             "  - ViewFinder_Main.exe (main overlay app)\n\n"
-            "• Individual Compilation: Compile each component separately"
+            "• Individual Compilation: Compile each component separately\n\n"
+            "Note: Files are automatically detected in current directory and subdirectories"
         )
         info_label.setWordWrap(True)
         options_layout.addWidget(info_label)
@@ -201,6 +287,10 @@ class CompilerGUI(QWidget):
             QPushButton:hover {
                 background-color: #14ffec;
                 color: #000000;
+            }
+            QPushButton:disabled {
+                background-color: #2b2b2b;
+                color: #666666;
             }
         """)
         options_layout.addWidget(self.compile_all_btn)
@@ -264,6 +354,61 @@ class CompilerGUI(QWidget):
         bottom_layout.addStretch()
         layout.addLayout(bottom_layout)
 
+    def check_files_on_startup(self):
+        """Check if project files are accessible on startup"""
+        files_to_check = [
+            "ViewFinder_Config_Menu.pyw",
+            "ViewFinder_0.9.pyw",
+            "ViewFinder_Launcher.pyw"
+        ]
+        
+        found_files = []
+        missing_files = []
+        
+        for file in files_to_check:
+            path = find_file(file, custom_path=self.custom_search_path)
+            if path:
+                found_files.append(f"{file} ✓")
+            else:
+                missing_files.append(file)
+        
+        if not missing_files:
+            self.status_label.setText(f"✓ All project files detected ({len(found_files)}/3)")
+            self.status_label.setStyleSheet("color: #14ffec; padding: 5px;")
+        else:
+            self.status_label.setText(f"⚠ {len(missing_files)} file(s) not found - Individual compile may fail")
+            self.status_label.setStyleSheet("color: #ff9800; padding: 5px;")
+
+    def browse_folder(self):
+        """Open folder browser dialog"""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Project Folder",
+            "",
+            QFileDialog.Option.ShowDirsOnly
+        )
+        
+        if folder:
+            self.custom_search_path = folder
+            self.current_folder_label.setText(f"Current search location: <b>{folder}</b>")
+            self.clear_folder_btn.setEnabled(True)
+            
+            # Re-check files with new path
+            self.check_files_on_startup()
+            
+            self.log_output.append(f"Custom folder set: {folder}\n")
+
+    def clear_custom_folder(self):
+        """Clear custom folder and use default search"""
+        self.custom_search_path = None
+        self.current_folder_label.setText("Current search location: <b>Current directory</b>")
+        self.clear_folder_btn.setEnabled(False)
+        
+        # Re-check files with default path
+        self.check_files_on_startup()
+        
+        self.log_output.append("Custom folder cleared. Using current directory.\n")
+
     def apply_dark_theme(self):
         self.setStyleSheet("""
             QWidget {
@@ -323,18 +468,20 @@ class CompilerGUI(QWidget):
             ("ViewFinder_Launcher.pyw", "ViewFinder", "Launcher")
         ]
         
-        # Check if all files exist
+        # Check if all files can be found
         missing = []
         for file, _, _ in targets:
-            if not os.path.isfile(file):
+            if not find_file(file, custom_path=self.custom_search_path):
                 missing.append(file)
         
         if missing:
+            search_location = self.custom_search_path if self.custom_search_path else "current directory and subdirectories"
             QMessageBox.critical(
                 self,
                 "Files Not Found",
                 f"Cannot find required files:\n\n" + "\n".join(missing) +
-                "\n\nMake sure all project files are in the same directory."
+                f"\n\nSearched in: {search_location}\n"
+                "Try using 'Browse for Project Folder' to specify the correct location."
             )
             return
         
@@ -342,11 +489,14 @@ class CompilerGUI(QWidget):
 
     def compile_single(self, target_file, output_name, description):
         """Compile a single component"""
-        if not os.path.isfile(target_file):
+        if not find_file(target_file, custom_path=self.custom_search_path):
+            search_location = self.custom_search_path if self.custom_search_path else "current directory and subdirectories"
             QMessageBox.critical(
                 self,
                 "File Not Found",
-                f"Cannot find {target_file}\n\nMake sure the file is in the same directory."
+                f"Cannot find {target_file}\n\n"
+                f"Searched in: {search_location}\n"
+                "Try using 'Browse for Project Folder' to specify the correct location."
             )
             return
         
@@ -361,6 +511,8 @@ class CompilerGUI(QWidget):
         self.compile_config_btn.setEnabled(False)
         self.compile_main_btn.setEnabled(False)
         self.open_dist_btn.setEnabled(False)
+        self.browse_folder_btn.setEnabled(False)
+        self.clear_folder_btn.setEnabled(False)
         
         # Show progress bar
         self.progress_bar.setVisible(True)
@@ -368,8 +520,8 @@ class CompilerGUI(QWidget):
         
         self.log_output.clear()
         
-        # Start thread
-        self.compile_thread = CompileThread(targets)
+        # Start thread with custom path if set
+        self.compile_thread = CompileThread(targets, self.custom_search_path)
         self.compile_thread.log_signal.connect(self.append_log)
         self.compile_thread.finished_signal.connect(self.compilation_finished)
         self.compile_thread.start()
@@ -385,6 +537,9 @@ class CompilerGUI(QWidget):
         self.compile_launcher_btn.setEnabled(True)
         self.compile_config_btn.setEnabled(True)
         self.compile_main_btn.setEnabled(True)
+        self.browse_folder_btn.setEnabled(True)
+        if self.custom_search_path:
+            self.clear_folder_btn.setEnabled(True)
         
         # Hide progress bar
         self.progress_bar.setVisible(False)
