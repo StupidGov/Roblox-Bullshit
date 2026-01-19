@@ -1,7 +1,7 @@
 # Core GUI Framework
 PyQt5>=5.15.0
 
-# Screen capture and computer vision
+# Screen capture
 mss>=6.1.0
 opencv-python>=4.5.0
 numpy>=1.21.0
