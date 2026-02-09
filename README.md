@@ -144,6 +144,8 @@ See `requirements.txt`. The project targets Python 3.9+. If platform-specific pe
 ### Roadmap / TODO
 
 - Auto-detection: add a calibration wizard and presets to simplify setup. Current manual workaround: open `ViewFinder_Config_Menu.pyw` and re-calibrate X/Y for your resolution.
+- Weather warning system: add a text and/or icon for the current weather events and their duration.
+- Options menu keybind: add a menu in which you would choose which modules to enable (for example, toggle crosshair and weather on, but magnification off, or vice versa) and a keybind for it. For a reference, turn to meteor client.
 
 ### Contributing
 
