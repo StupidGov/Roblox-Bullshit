@@ -10,19 +10,6 @@ This tool is fully **external**, **non-intrusive**, and safe to use.
 
 ---
 
-## Why This Tool Was Created
-
-BRM5's helicopter door guns offer no native crosshair and no meaningful zoom for long-range engagement.
-
-This utility adds:
-- A reliable, centered, and fully customizable crosshair
-- A magnified view of the selected area on your screen with adjustable zoom levels
-- Individual overlay toggles for maximum flexibility
-
-Together, they make aiming and target identification far easier during air support operations.
-
----
-
 ## Main Features
 
 ### ✓ Customizable Crosshair Overlay
@@ -35,9 +22,7 @@ Together, they make aiming and target identification far easier during air suppo
 ### ✓ Adjustable Magnifier Window
 - Variable zoom levels (0.1x - 10x)
 - Configurable capture radius and window size
-- Adjustable refresh rate (10-60 FPS)
 - Draggable magnified view window
-- Smooth interpolation for quality scaling
 
  # ViewFinder — Quick Start
 
